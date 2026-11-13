@@ -1,0 +1,126 @@
+diff --git a/base/telephony/ril_adapter/interfaces/innerkits/include/hril_notification.h b/base/telephony/ril_adapter/interfaces/innerkits/include/hril_notification.h
+index f070c6ae2fb2ddc7bd56f234fd0d4a519d269d19..f43fbd3bbd5cea1f6cda160376ea0daa372ce7a8 100644
+--- a/base/telephony/ril_adapter/interfaces/innerkits/include/hril_notification.h
++++ b/base/telephony/ril_adapter/interfaces/innerkits/include/hril_notification.h
+@@ -153,6 +153,9 @@ typedef enum {
+     /** Called when network restricted state is updated. */
+     HNOTI_NETWORK_RESTRICTED_STATE_UPDATED,
+
++    /** Explicit modem 5A state, int32_t payload restricted to 0 or 1. */
++    HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED = 1412,
++
+     HNOTI_COMMON_BASE = 1500,
+
+     /** Called when radio state is updated. */
+diff --git a/base/telephony/ril_adapter/services/hril/include/hril_network.h b/base/telephony/ril_adapter/services/hril/include/hril_network.h
+index c8df9821538daf3ed06ac04e53cf06c05e839cc2..23911d76de407f0d2039309ad26c556f6fc04836 100644
+--- a/base/telephony/ril_adapter/services/hril/include/hril_network.h
++++ b/base/telephony/ril_adapter/services/hril/include/hril_network.h
+@@ -105,6 +105,7 @@ public:
+         int32_t indType, const HRilErrNumber error, const void *response, size_t responseLen);
+     int32_t NetworkCurrentCellUpdated_1_2(
+         int32_t indType, const HRilErrNumber error, const void *response, size_t responseLen);
++    int32_t CommunicationStateUpdated(int32_t indType, HRilErrNumber error, const void *response, size_t responseLen);
+     void RegisterNetworkFuncs(const HRilNetworkReq *networkFuncs);
+     bool IsNetworkRespOrNotify(uint32_t code);
+     int32_t ResidentNetworkUpdated(int32_t indType, HRilErrNumber error, const void *response, size_t responseLen);
+diff --git a/base/telephony/ril_adapter/services/hril/include/hril_notification_map.h b/base/telephony/ril_adapter/services/hril/include/hril_notification_map.h
+index 38bc8df8279429e6eabf375f64280cb847e54922..65f13ab1ca8b62fe93a138847030ba83cdf2fe33 100644
+--- a/base/telephony/ril_adapter/services/hril/include/hril_notification_map.h
++++ b/base/telephony/ril_adapter/services/hril/include/hril_notification_map.h
+@@ -41,6 +41,7 @@
+     {HNOTI_NETWORK_TIME_UPDATED, NEED_LOCK},
+     {HNOTI_NETWORK_TIME_ZONE_UPDATED, NEED_LOCK},
+     {HNOTI_NETWORK_PS_REG_STATUS_UPDATED, NEED_LOCK},
++    {HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED, UNNEED_LOCK},
+     {HNOTI_NETWORK_PHY_CHNL_CFG_UPDATED, NEED_LOCK},
+     {HNOTI_NETWORK_CURRENT_CELL_UPDATED, NEED_LOCK},
+     {HNOTI_NETWORK_RRC_CONNECTION_STATE_UPDATED, UNNEED_LOCK},
+diff --git a/base/telephony/ril_adapter/services/hril/src/hril_network.cpp b/base/telephony/ril_adapter/services/hril/src/hril_network.cpp
+index 2ea4c76d44a077d551a2d94e62bfb71b3c29500f..5791786345b88b476534ba6b2b8e0ff267814dcb 100644
+--- a/base/telephony/ril_adapter/services/hril/src/hril_network.cpp
++++ b/base/telephony/ril_adapter/services/hril/src/hril_network.cpp
+@@ -16,6 +16,7 @@
+ #include "hril_network.h"
+
+ #include <sys/time.h>
++#include <cstring>
+
+ #include "hril_notification.h"
+ #include "hril_request.h"
+@@ -40,6 +41,10 @@ HRilNetwork::HRilNetwork(int32_t slotId) : HRilBase(slotId)
+ void HRilNetwork::AddNotificationToMap()
+ {
+     // indication
++    notiMemberFuncMap_[HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED] =
++        [this](int32_t type, HRilErrNumber error, const void *data, size_t size) {
++            return CommunicationStateUpdated(type, error, data, size);
++        };
+     notiMemberFuncMap_[HNOTI_NETWORK_CS_REG_STATUS_UPDATED] =
+         [this](int32_t notifyType, HRilErrNumber error, const void *response,
+         size_t responseLen) { return NetworkCsRegStatusUpdated(notifyType, error, response, responseLen); };
+@@ -1472,5 +1477,18 @@ void HRilNetwork::RegisterNetworkFuncs(const HRilNetworkReq *networkFuncs)
+ {
+     networkFuncs_ = networkFuncs;
+ }
++int32_t HRilNetwork::CommunicationStateUpdated(int32_t indType, HRilErrNumber error,
++    const void *response, size_t responseLen)
++{
++    if (error != HRIL_ERR_SUCCESS || response == nullptr || responseLen != sizeof(int32_t)) {
++        return HRIL_ERR_INVALID_PARAMETER;
++    }
++    int32_t state = 0;
++    // Vendor buffers are not required to have int32_t alignment.
++    std::memcpy(&state, response, sizeof(state));
++    if (state != 0 && state != 1) { return HRIL_ERR_INVALID_PARAMETER; }
++    return Notify(indType, error, &HDI::Ril::V1_5::IRilCallback::CommunicationStateUpdated, state != 0);
++}
++
+ } // namespace Telephony
+ } // namespace OHOS
+diff --git a/base/telephony/ril_adapter/services/vendor/src/vendor_report.c b/base/telephony/ril_adapter/services/vendor/src/vendor_report.c
+index 5e3fb912880284b57ac9ab78f347596ba0ad8f6d..8cf7cedabf335b108b6e94cb5b27d81d88a65e2c 100644
+--- a/base/telephony/ril_adapter/services/vendor/src/vendor_report.c
++++ b/base/telephony/ril_adapter/services/vendor/src/vendor_report.c
+@@ -14,6 +14,9 @@
+  */
+
+ #include "vendor_report.h"
++#include <stdbool.h>
++#include <stdint.h>
++#include <string.h>
+
+ #include "at_call.h"
+ #include "at_sms.h"
+@@ -206,6 +209,23 @@ static void ProcessNotifyMock(const char *s, struct ReportInfo reportInfo)
+     return;
+ }
+
++static bool ReportCommunicationState(const char *line)
++{
++    static const char prefix[] = "+OHOS5A:";
++    if (strncmp(line, prefix, sizeof(prefix) - 1) != 0) { return false; }
++    const char *cursor = line + sizeof(prefix) - 1;
++    while (*cursor == ' ' || *cursor == '\t') { ++cursor; }
++    if (*cursor != '0' && *cursor != '1') { return true; }
++    int32_t state = *cursor++ - '0';
++    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') { ++cursor; }
++    if (*cursor != '\0') { return true; }
++    struct ReportInfo report = {0};
++    ReportInfoInit(&report);
++    report.notifyId = HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED;
++    OnNetworkReport(GetSlotId(NULL), report, (const uint8_t *)&state, sizeof(state));
++    return true;
++}
++
+ void OnNotifyOps(const char *s, const char *smsPdu)
+ {
+     if (s == NULL) {
+@@ -217,6 +237,7 @@ void OnNotifyOps(const char *s, const char *smsPdu)
+     if (GetRadioState() == HRIL_RADIO_POWER_STATE_UNAVAILABLE) {
+         return;
+     }
++    if (ReportCommunicationState(s)) { return; }
+     str = strdup(s);
+     if (str == NULL) {
+         return;
