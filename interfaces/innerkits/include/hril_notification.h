@@ -153,6 +153,9 @@ typedef enum {
     /** Called when network restricted state is updated. */
     HNOTI_NETWORK_RESTRICTED_STATE_UPDATED,
 
+    /** Explicit modem 5A state, int32_t payload restricted to 0 or 1. */
+    HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED = 1412,
+
     HNOTI_COMMON_BASE = 1500,
 
     /** Called when radio state is updated. */

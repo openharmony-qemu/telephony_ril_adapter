@@ -16,6 +16,7 @@
 #include "hril_network.h"
 
 #include <sys/time.h>
+#include <cstring>
 
 #include "hril_notification.h"
 #include "hril_request.h"
@@ -40,6 +41,10 @@ HRilNetwork::HRilNetwork(int32_t slotId) : HRilBase(slotId)
 void HRilNetwork::AddNotificationToMap()
 {
     // indication
+    notiMemberFuncMap_[HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED] =
+        [this](int32_t type, HRilErrNumber error, const void *data, size_t size) {
+            return CommunicationStateUpdated(type, error, data, size);
+        };
     notiMemberFuncMap_[HNOTI_NETWORK_CS_REG_STATUS_UPDATED] =
         [this](int32_t notifyType, HRilErrNumber error, const void *response,
         size_t responseLen) { return NetworkCsRegStatusUpdated(notifyType, error, response, responseLen); };
@@ -1472,5 +1477,18 @@ void HRilNetwork::RegisterNetworkFuncs(const HRilNetworkReq *networkFuncs)
 {
     networkFuncs_ = networkFuncs;
 }
+int32_t HRilNetwork::CommunicationStateUpdated(int32_t indType, HRilErrNumber error,
+    const void *response, size_t responseLen)
+{
+    if (error != HRIL_ERR_SUCCESS || response == nullptr || responseLen != sizeof(int32_t)) {
+        return HRIL_ERR_INVALID_PARAMETER;
+    }
+    int32_t state = 0;
+    // Vendor buffers are not required to have int32_t alignment.
+    std::memcpy(&state, response, sizeof(state));
+    if (state != 0 && state != 1) { return HRIL_ERR_INVALID_PARAMETER; }
+    return Notify(indType, error, &HDI::Ril::V1_5::IRilCallback::CommunicationStateUpdated, state != 0);
+}
+
 } // namespace Telephony
 } // namespace OHOS

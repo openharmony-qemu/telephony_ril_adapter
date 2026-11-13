@@ -14,6 +14,9 @@
  */
 
 #include "vendor_report.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
 #include "at_call.h"
 #include "at_sms.h"
@@ -206,6 +209,23 @@ static void ProcessNotifyMock(const char *s, struct ReportInfo reportInfo)
     return;
 }
 
+static bool ReportCommunicationState(const char *line)
+{
+    static const char prefix[] = "+OHOS5A:";
+    if (strncmp(line, prefix, sizeof(prefix) - 1) != 0) { return false; }
+    const char *cursor = line + sizeof(prefix) - 1;
+    while (*cursor == ' ' || *cursor == '\t') { ++cursor; }
+    if (*cursor != '0' && *cursor != '1') { return true; }
+    int32_t state = *cursor++ - '0';
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') { ++cursor; }
+    if (*cursor != '\0') { return true; }
+    struct ReportInfo report = {0};
+    ReportInfoInit(&report);
+    report.notifyId = HNOTI_NETWORK_COMMUNICATION_STATE_UPDATED;
+    OnNetworkReport(GetSlotId(NULL), report, (const uint8_t *)&state, sizeof(state));
+    return true;
+}
+
 void OnNotifyOps(const char *s, const char *smsPdu)
 {
     if (s == NULL) {
@@ -217,6 +237,7 @@ void OnNotifyOps(const char *s, const char *smsPdu)
     if (GetRadioState() == HRIL_RADIO_POWER_STATE_UNAVAILABLE) {
         return;
     }
+    if (ReportCommunicationState(s)) { return; }
     str = strdup(s);
     if (str == NULL) {
         return;
